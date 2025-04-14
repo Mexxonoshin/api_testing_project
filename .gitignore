@@ -1,5 +1,14 @@
-venv
-.idea
-__pycache__
-pytest.cache
-DSstore
+# Игнорируем виртуальные окружения
+venv/
+
+# Игнорируем папку проекта IntelliJ IDEA
+.idea/
+
+# Игнорируем кэшированные файлы Python
+__pycache__/
+
+# Игнорируем кэш тестов Pytest
+pytest.cache/
+
+# Игнорируем файлы DS_Store (обычно создаются macOS)
+.DS_Store
