@@ -68,23 +68,19 @@ def test_token_validation(authorized_client):
 
 
 @allure.title("GET /meme/{id} - Получение мема по ID - 200")
-def test_get_single_meme(mem_client):
-    mem_client.get_all_memes()
-    mem_client.check_status(200)
+def test_get_single_meme(mem_client, existing_meme_id):
+    with allure.step("Получение мема по ID"):
+        mem_client.get_meme_by_id(existing_meme_id)
+        mem_client.check_status(200)
 
-    # Проверяем JSON-ответ и получаем ID первого мема
-    all_memes = mem_client.check_json_response()
-    test_id = all_memes['data'][0]['id']
+    with allure.step("Проверка данных мема"):
+        meme_data = mem_client.check_json_response()
+        print(f"Ответ сервера:{meme_data}")
 
-    # Получаем конкретный мем по ID
-    mem_client.get_meme_by_id(test_id)
-    mem_client.check_status(200)
-
-    # Проверяем, что полученный мем имеет правильный ID
-    meme_data = mem_client.check_json_response()
-    print(f"Ответ сервера: {meme_data}")
-
-    assert meme_data['id'] == test_id, "ID полученного мема не совпадает с запрошенным"
+        assert meme_data['id'] == existing_meme_id, (
+            f"ID полученного мема ({meme_data['id']}) "
+            f"не совпадает с запрошенным ({existing_meme_id})"
+        )
 
 # pytest test_api_final.py::test_get_single_meme -v -s
 
@@ -112,15 +108,18 @@ def test_get_single_meme_unauthorized(mem_client, unauthorized_mem_client):
 # pytest test_api_final.py::test_get_single_meme_unauthorized -v -s
 
 @allure.title("GET /meme/{id} - Запрос несуществующего мема - 404")
-def test_get_nonexistent_meme(mem_client):
-    with allure.step("Подготовка тестовых данных"):
-        nonexistent_id = 99999999 # Заведомо несуществующий ID
-        print(f"Используем тестовый ID: {nonexistent_id}")
-
+def test_get_nonexistent_meme(mem_client, nonexistent_meme_id):
     with allure.step("Отправка запроса несуществующего мема"):
-        mem_client.get_meme_by_id(nonexistent_id)
+        print(f"Используем тестовый ID: {nonexistent_meme_id}")
+        mem_client.get_meme_by_id(nonexistent_meme_id)
         mem_client.check_status(404)
+
         response_text = mem_client.response.text
+        allure.attach(
+            f"Запрошенный ID: {nonexistent_meme_id}\n"
+            f"Ответ сервера:\n{response_text}",
+            name="Детали ответа"
+        )
         print(f"Получен ожидаемый статус 404:\n{response_text}")
 
         assert "<title>404 Not Found</title>" in response_text, "Неверный заголовок ошибки"
@@ -130,7 +129,7 @@ def test_get_nonexistent_meme(mem_client):
 # pytest test_api_final.py::test_get_nonexistent_meme -v -s
 
 @allure.title("POST /meme - Успешное создание мема - 200")
-def test_create_meme_success(post_client):
+def test_create_meme_success(post_client, delete_client):
     with allure.step("Подготовка тестовых данных"):
         test_data = {
             "text": "Funny Python Meme",
@@ -142,7 +141,7 @@ def test_create_meme_success(post_client):
     with allure.step("Отправка запроса и проверка ответа"):
         post_client.create_meme(**test_data)
         post_client.check_status(200)
-        post_client.check_json_response()  # Проверяем что ответ JSON
+        response = post_client.check_json_response()  # Проверяем что ответ JSON
 
         # Проверка полей через check_json_field()
         post_client.check_json_field('id')
@@ -153,6 +152,14 @@ def test_create_meme_success(post_client):
 
         # Проверка тегов
         post_client.check_tags(test_data['tags'])
+
+        meme_id = response['id']
+        print(f"Создан мем с ID: {meme_id}")
+
+    with allure.step("Удаление созданного мема"):
+        delete_client.delete_meme(meme_id)
+        delete_client.check_status(200)
+        print(f"Мем {meme_id} успешно удален")
 
 # pytest test_api_final.py::test_create_meme_success -v -s
 
@@ -224,18 +231,9 @@ def test_create_meme_missing_field(post_client, missing_field):
 
 
 @allure.title("PUT /meme/<id> - Обновление мема без авторизации - 401")
-def test_update_meme_unauthorized(post_client, unauthorized_put_client):
-    with allure.step("Создание тестового мема для проверки"):
-        test_data = {
-            "text": "Test meme for unauthorized update",
-            "url": "https://example.com/test.jpg",
-            "tags": ["test"],
-            "info": {"author": "test"}
-        }
-        post_client.create_meme(**test_data)
-        post_client.check_status(200)
-        meme_id = post_client.response.json()["id"]
-        print(f"\n[DEBUG] Создан тестовый мем с ID: {meme_id}")
+def test_update_meme_unauthorized(create_meme_for_update, unauthorized_put_client):
+    meme_id = create_meme_for_update
+    print(f"\n[DEBUG] Создан тестовый мем с ID: {meme_id}")
 
     with allure.step("Попытка обновления без токена и получение 401"):
         unauthorized_put_client.update_meme(
@@ -292,17 +290,9 @@ def test_update_meme(post_client, put_client):
 
 
 @allure.title("Успешное удаление мема")
-def test_successful_delete(post_client, delete_client):
-    with allure.step("Создание тестового мема"):
-        post_client.create_meme(
-            text="DELETE Original Python Meme",
-            url="https://example.com/delete_original.jpg",
-            tags=["python", "delete_original"],
-            info={"author": "delete_pytest"}
-        )
-
-        meme_id = post_client.response.json()['id']
-        print(f"Создан мем с ID, {meme_id}")
+def test_successful_delete(create_meme_for_update, delete_client):
+    meme_id = create_meme_for_update
+    print(f"\n[DEBUG] Создан тестовый мем с ID: {meme_id}")
 
     with allure.step("Удаление тестового мема"):
         delete_client.delete_meme(meme_id)
@@ -335,57 +325,34 @@ def test_repeated_delete(delete_client):
     print(f"Проверено удаление несуществующего мема ID: {non_meme_id}")
     print(f"Тело ответа: {delete_client.response.text}")
 
+
 @allure.title("Попытка удаления чужого мема")
-def test_unauthorization_delete(auth_client, post_client, delete_client):
-    with allure.step("Авторизация пользователя-владельца"):
-        auth_client.authorize("OWNER-user")
-        owner_token = auth_client.token
-        post_client.headers['Authorization'] = owner_token
-        print("Авторизован владелец токена OWNER-user")
+def test_unauthorization_delete(create_meme_for_update, other_user_delete_client, delete_client, post_client):
+    meme_id = create_meme_for_update
+    print(f"\n[DEBUG] Создан тестовый мем с ID: {meme_id}")
 
-    with allure.step("Создание тестового мема под пользователем - OWNER-user"):
-        post_client.create_meme(
-            text="Чужой мем для теста",
-            url="https://example.com/foreign_meme.jpg",
-            tags=["test", "foreign"],
-            info={"owner": "OwnerUser"}
-        )
+    with allure.step("Попытка удаления чужого мема другим пользователем"):
+        other_user_delete_client.delete_meme(meme_id)
+        other_user_delete_client.check_unauthorized_delete()
+        print(f"Проверено: OTHER-user не смог удалить мем: {meme_id}")
 
-        meme_id = post_client.response.json()['id']
-        print(f"Создан мем в ID: {meme_id}")
-
-    with allure.step("Авторизация другого пользователя OTHER-user"):
-        auth_client.authorize("OTHER-user")
-        other_token = auth_client.token
-        delete_client.headers['Authorization'] = other_token
-        print("Авторизован пользователь OTHER-user")
-
-    with allure.step("Попытка удаления чужого мема"):
+    with allure.step("Проверка удаления владельцем"):
+        # Синхронизируем токен владельца
+        delete_client.headers['Authorization'] = post_client.headers['Authorization']
         delete_client.delete_meme(meme_id)
-        delete_client.check_unauthorized_delete()
-        print(f"Проверено: OTHER-user не смог удалить мем: {meme_id}, владельца - OWNER-user")
-        # print(f"Статус ответа: {delete_client.response.status_code}")
-        # print(f"Ответ сервера:\n{delete_client.response.text}")
+        delete_client.check_successful_delete(meme_id)
 
-    allure.attach(
-        f"Попытка удаления чужого мема c ID: {meme_id}\n"
-        f"Ожидаемый статус: 403\n"
-        f"Фактический статус: {delete_client.response.status_code}\n"
-        f"Ответ: {delete_client.response.text}",
-        name="Результат проверки прав доступа"
-    )
-
-    with allure.step("Проверка что мем остался доступен - OWNER-user-у для удаления"):
-        post_client.headers['Authorization'] = owner_token
-        response = requests.delete(
-            f"{post_client.base_url}/meme/{meme_id}",
-            headers={'Authorization': owner_token}
+        allure.attach(
+            f"Мем ID: {meme_id}\n"
+            f"Статус удаления: {delete_client.response.status_code}\n"
+            f"Ответ сервера: {delete_client.response.text}",
+            name="Результат удаления владельцем"
         )
 
         print(
             f" Мем: {meme_id} Доступен владельцу \n"
-            f"Статус ответа на удаление: {response.status_code}\n"
-            f"Тело ответа: {response.text}"
+            f"Статус ответа на удаление: {delete_client.response.status_code}\n"
+            f"Тело ответа: {delete_client.response.text}"
         )
 
 # rm -rf allure-results
